@@ -1,4 +1,4 @@
-links: {"r1-r2": (mininet_node, "r1-eth1", "10.0.12.2")}
+links: one entry per LINKS item (a, b) at index i, as "a-b": (net[a], "a-b", "10.0.i.2"), probed from a toward b
 probe sample: {"latency": ms, "jitter": ms, "loss": percent}
 Engine(links, probe_fn, on_at_risk=f(link, ts), on_hard_cutoff=f(link, ts), on_clear=f(link, ts), tag="run")
 ts: time.time() epoch seconds, one VM only
