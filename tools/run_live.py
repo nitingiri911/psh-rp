@@ -29,7 +29,7 @@ except ImportError:
     def on_clear(link, ts):
         print("CLEAR", link, round(ts, 3))
 
-SCENARIOS = {"s1": 60, "s2": 15, "s4": 0}
+SCENARIOS = {"s1": 60, "s2": 15, "s3": 0, "s4": 0}
 
 
 def build_links(net):
@@ -57,6 +57,9 @@ def main():
     ap.add_argument("--timers", choices=["default", "tuned"], default="tuned")
     ap.add_argument("--noisy", action="store_true")
     ap.add_argument("--interval", type=float, default=None)
+    ap.add_argument("--noise-delay", type=float, default=20.0)
+    ap.add_argument("--noise-jitter", type=float, default=15.0)
+    ap.add_argument("--noise-loss", type=float, default=1.0)
     args = ap.parse_args()
     if os.geteuid() != 0:
         sys.exit("Run with sudo.")
@@ -73,7 +76,10 @@ def main():
         T.write_configs(args.proto, args.timers)
         T.start_frr(net, args.proto)
         if args.noisy or args.scenario == "s4":
-            netem_ctl.make_noisy(net, *T.NOISY_LINK)
+            netem_ctl.make_noisy(
+                net, *T.NOISY_LINK,
+                delay_ms=args.noise_delay, jitter_ms=args.noise_jitter, loss_pct=args.noise_loss,
+            )
         t = T.wait_converged(net)
         if t is None:
             sys.exit("routing did not converge, see /tmp/pshrp/<router>/*.log")
@@ -86,6 +92,11 @@ def main():
         time.sleep(args.baseline)
         if args.scenario == "s4":
             time.sleep(args.hold)
+        elif args.scenario == "s3":
+            a, b = args.link.split("-")
+            t_cut = netem_ctl.cut(net, a, b)
+            write_failures(tag, args.link, {"ramp_start": t_cut, "cut": t_cut})
+            time.sleep(args.after)
         else:
             a, b = args.link.split("-")
             n = SCENARIOS[args.scenario]
