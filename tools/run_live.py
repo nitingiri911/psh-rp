@@ -29,7 +29,7 @@ except ImportError:
     def on_clear(link, ts):
         print("CLEAR", link, round(ts, 3))
 
-SCENARIOS = {"s1": 60, "s2": 15, "s4": 0}
+SCENARIOS = {"s1": 60, "s2": 15, "s3": 0, "s4": 0}
 
 
 def build_links(net):
@@ -92,6 +92,11 @@ def main():
         time.sleep(args.baseline)
         if args.scenario == "s4":
             time.sleep(args.hold)
+        elif args.scenario == "s3":
+            a, b = args.link.split("-")
+            t_cut = netem_ctl.cut(net, a, b)
+            write_failures(tag, args.link, {"ramp_start": t_cut, "cut": t_cut})
+            time.sleep(args.after)
         else:
             a, b = args.link.split("-")
             n = SCENARIOS[args.scenario]
