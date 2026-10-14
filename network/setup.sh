@@ -7,6 +7,9 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y \
     mininet iperf3 tcpdump tshark git iproute2 frr frr-pythontools \
     python3-networkx python3-matplotlib python3-pandas
 
+# FRR refuses to run as root unless root is in its vty group (found by Nitin, WSL2).
+sudo usermod -aG frrvty root || true
+
 # We start zebra/ospfd/ripd ourselves inside each Mininet node,
 # so the system-wide FRR service must not run.
 sudo systemctl disable --now frr 2>/dev/null || true
