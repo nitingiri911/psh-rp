@@ -6,7 +6,7 @@
 RUNS=${1:-3}
 MODE=${2:-blackhole}
 cd "$(dirname "$0")"
-for cfg in "ospf default 60" "ospf tuned 15" "rip default 220" "rip tuned 40"; do
+for cfg in "ospf default 60" "ospf tuned 15" "rip default 260" "rip tuned 40"; do
   set -- $cfg
   proto=$1; timers=$2; post=$3
   [ "$MODE" = "down" ] && post=15

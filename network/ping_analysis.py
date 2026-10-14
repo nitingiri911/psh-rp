@@ -1,7 +1,7 @@
 """Turn `ping -D` output into outage numbers. Pure Python, no Mininet needed."""
 import re
 
-_RE = re.compile(r"^\[(\d+\.\d+)\].*icmp_seq=(\d+)")
+_RE = re.compile(r"^\[(\d+\.\d+)\]\s+\d+ bytes from .*icmp_seq=(\d+)")
 NAN = float("nan")
 
 
