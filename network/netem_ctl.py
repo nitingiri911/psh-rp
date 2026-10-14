@@ -28,6 +28,14 @@ def cut(net, a, b):
     return t
 
 
+def blackhole(net, a, b):
+    """Silent failure: link stays 'up' but drops everything, so routing must detect it with its timers.
+    Returns the failure timestamp."""
+    t = time.time()
+    degrade(net, a, b, delay_ms=2.0, loss_pct=100.0)
+    return t
+
+
 def heal(net, a, b):
     net.configLinkStatus(a, b, "up")
 
