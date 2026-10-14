@@ -70,6 +70,9 @@ def main():
         time.sleep(1)
         with open(PING_FILE) as f:
             text = f.read()
+        (LOGS / "raw").mkdir(exist_ok=True)
+        with open(LOGS / "raw" / f"{tag}_run{args.run}_ping.txt", "w") as g:
+            g.write(text)
     finally:
         net.stop()
         T.stop_frr()
