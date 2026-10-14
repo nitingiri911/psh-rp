@@ -10,6 +10,7 @@ Use run_baseline.sh to repeat this for every protocol and timer setting.
 import argparse
 import csv
 import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -39,6 +40,8 @@ def main():
     ap.add_argument("--mode", choices=["blackhole", "down"], default="blackhole",
                     help="blackhole = silent failure found by timers; down = interface goes down")
     ap.add_argument("--pre", type=float, default=5, help="seconds of traffic before the failure")
+    ap.add_argument("--pre-jitter", type=float, default=0,
+                    help="add a random 0..N seconds to --pre, so the failure lands at a random point of the hello/update cycle")
     ap.add_argument("--post", type=float, default=60, help="seconds of traffic after the failure")
     ap.add_argument("--settle", type=float, default=10, help="seconds to wait after first ping works")
     ap.add_argument("--run", type=int, default=1)
@@ -61,9 +64,10 @@ def main():
             sys.exit("Network never converged, run aborted.")
         time.sleep(args.settle)
 
-        count = int((args.pre + args.post) * 100)
+        pre = args.pre + random.uniform(0, args.pre_jitter)
+        count = int((pre + args.post) * 100)
         net["h1"].cmd(f"rm -f {PING_FILE}; ping -D -i 0.01 -W 1 -c {count} 192.168.2.10 > {PING_FILE} 2>&1 &")
-        time.sleep(args.pre)
+        time.sleep(pre)
         t_cut = netem_ctl.cut(net, a, b) if args.mode == "down" else netem_ctl.blackhole(net, a, b)
         time.sleep(args.post + 2)
         net["h1"].cmd("pkill -INT ping")
