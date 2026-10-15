@@ -1,0 +1,17 @@
+variant,metric,n,mean,sd,ci95
+fixed,lead,30,10.17,0.59,0.22
+fixed,cutoff,0,,,
+fixed,false,30,0.00,0.00,0.00
+fixed,warm,30,0.00,0.00,0.00
+no_hard,lead,30,12.15,0.06,0.02
+no_hard,cutoff,0,,,
+no_hard,false,30,0.00,0.00,0.00
+no_hard,warm,30,0.00,0.00,0.00
+no_trend,lead,30,12.15,0.06,0.02
+no_trend,cutoff,30,2.83,3.29,1.23
+no_trend,false,30,0.00,0.00,0.00
+no_trend,warm,30,0.00,0.00,0.00
+psh,lead,30,12.15,0.06,0.02
+psh,cutoff,30,4.90,2.03,0.76
+psh,false,30,0.00,0.00,0.00
+psh,warm,30,0.00,0.00,0.00
