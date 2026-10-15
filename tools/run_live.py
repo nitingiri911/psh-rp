@@ -36,6 +36,12 @@ def build_links(net):
     return {f"{a}-{b}": (net[a], f"{a}-{b}", f"10.0.{i}.2") for i, (a, b) in enumerate(T.LINKS, 1)}
 
 
+def fail(net, a, b, kind):
+    if kind == "blackhole":
+        return netem_ctl.blackhole(net, a, b)
+    return netem_ctl.cut(net, a, b)
+
+
 def write_failures(tag, link, marks):
     with open(f"logs/{tag}_failures.csv", "w", newline="") as f:
         w = csv.writer(f)
@@ -56,6 +62,7 @@ def main():
     ap.add_argument("--proto", choices=["ospf", "rip"], default="ospf")
     ap.add_argument("--timers", choices=["default", "tuned"], default="tuned")
     ap.add_argument("--noisy", action="store_true")
+    ap.add_argument("--failure", choices=["down", "blackhole"], default="down")
     ap.add_argument("--interval", type=float, default=None)
     ap.add_argument("--noise-delay", type=float, default=20.0)
     ap.add_argument("--noise-jitter", type=float, default=15.0)
@@ -94,13 +101,15 @@ def main():
             time.sleep(args.hold)
         elif args.scenario == "s3":
             a, b = args.link.split("-")
-            t_cut = netem_ctl.cut(net, a, b)
+            t_cut = fail(net, a, b, args.failure)
             write_failures(tag, args.link, {"ramp_start": t_cut, "cut": t_cut})
             time.sleep(args.after)
         else:
             a, b = args.link.split("-")
             n = SCENARIOS[args.scenario]
-            marks = netem_ctl.ramp(net, a, b, duration=n, steps=n, then_cut=True)
+            marks = netem_ctl.ramp(net, a, b, duration=n, steps=n, then_cut=args.failure == "down")
+            if args.failure == "blackhole":
+                marks["cut"] = netem_ctl.blackhole(net, a, b)
             write_failures(tag, args.link, marks)
             time.sleep(args.after)
     finally:
@@ -109,6 +118,7 @@ def main():
         net.stop()
         T.stop_frr()
     summarize(tag)
+    open(f"logs/{tag}_done", "w").close()
     print("logs written to logs/" + tag + "_*.csv")
 
 
