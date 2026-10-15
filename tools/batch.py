@@ -65,7 +65,7 @@ def main():
         if os.geteuid() != 0:
             sys.exit("Run with sudo.")
         for tag in tags:
-            if os.path.exists(f"logs/{tag}_events.csv"):
+            if os.path.exists(f"logs/{tag}_done"):
                 print("skip", tag)
                 continue
             print("run", tag, flush=True)
