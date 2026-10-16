@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+import random
 import sys
 import time
 
@@ -63,6 +64,7 @@ def main():
     ap.add_argument("--timers", choices=["default", "tuned"], default="tuned")
     ap.add_argument("--noisy", action="store_true")
     ap.add_argument("--failure", choices=["down", "blackhole"], default="down")
+    ap.add_argument("--phase-jitter", type=float, default=2.0)
     ap.add_argument("--interval", type=float, default=None)
     ap.add_argument("--noise-delay", type=float, default=20.0)
     ap.add_argument("--noise-jitter", type=float, default=15.0)
@@ -96,7 +98,7 @@ def main():
         print("callbacks:", CALLBACKS)
         eng = Engine(links, make_probe_fn(links), on_at_risk, on_hard_cutoff, on_clear, tag=tag)
         eng.start()
-        time.sleep(args.baseline)
+        time.sleep(args.baseline + random.uniform(0, args.phase_jitter))
         if args.scenario == "s4":
             time.sleep(args.hold)
         elif args.scenario == "s3":
