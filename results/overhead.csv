@@ -1,0 +1,6 @@
+config,seconds,packets,bytes,bytes_per_s,packets_per_s
+ospf_default,120,28,2416,20.1,0.233
+ospf_tuned,120,246,20292,169.1,2.05
+rip_default,120,8,1168,9.7,0.067
+rip_tuned,120,48,7008,58.4,0.4
+psh_probe_1_per_s,120,236,23128,192.7,1.967
