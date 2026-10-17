@@ -16,6 +16,7 @@ Results are appended to logs/psh_failover.csv.
 import argparse
 import csv
 import os
+import random
 import re
 import sys
 import threading
@@ -80,8 +81,16 @@ class Swapper:
             path = self.standby.get(link) or self._backup(link)
             if path is None:
                 return  # no alternative: fall back to OSPF/RIP
-            R.install_path(self.net, path, FWD_PREFIX)
-            R.install_path(self.net, path[::-1], REV_PREFIX)
+            errors = (R.install_path(self.net, path, FWD_PREFIX)
+                      + R.install_path(self.net, path[::-1], REV_PREFIX))
+            if not errors and R.route_dev(self.net, SRC, "192.168.2.10") != R.hop(path[0], path[1])[0]:
+                errors.append("route check failed: traffic does not use the backup interface")
+            if errors:
+                print("SWAP FAILED:", errors, file=sys.stderr)
+                R.remove_path(self.net, path, FWD_PREFIX)
+                R.remove_path(self.net, path[::-1], REV_PREFIX)
+                self.events.append((time.time(), link, "swap_failed"))
+                return
             self.active = (link, path, time.time())
             self.events.append((self.active[2], link, "swap"))
 
@@ -108,10 +117,13 @@ def main():
     ap.add_argument("--baseline", type=float, default=45, help="healthy seconds before the ramp")
     ap.add_argument("--ramp", type=int, default=60, help="seconds of degradation before the failure (0 = sudden)")
     ap.add_argument("--post", type=float, default=30, help="seconds of traffic after the failure")
+    ap.add_argument("--jitter", type=float, default=10,
+                    help="random 0..N s added to --baseline, so the failure lands at a random point of the probe and hello cycles")
     ap.add_argument("--run", type=int, default=1)
     args = ap.parse_args()
     if os.geteuid() != 0:
         sys.exit("Run with sudo.")
+    os.chdir(ROOT)  # the engine writes logs/ relative to the current folder
     a, b = args.link.split("-")
     mode = "psh" if args.psh else "plain"
     tag = f"{mode}_{args.proto}_{args.timers}_{args.failure}_r{args.ramp}"
@@ -136,9 +148,10 @@ def main():
             eng = Engine(links, make_probe_fn(links), swapper.on_at_risk, swapper.on_hard_cutoff,
                          swapper.on_clear, tag=f"{tag}_run{args.run}")
             eng.start()
-        total = args.baseline + args.ramp + args.post
+        base = args.baseline + random.uniform(0, args.jitter)
+        total = base + args.ramp + args.post
         net["h1"].cmd(f"rm -f {PING_FILE}; ping -D -i 0.01 -W 1 -c {int((total + 6) * 100)} 192.168.2.10 > {PING_FILE} 2>&1 &")
-        time.sleep(args.baseline)
+        time.sleep(base)
         t_ramp = time.time()
         if args.ramp > 0:
             netem_ctl.ramp(net, a, b, duration=args.ramp, steps=args.ramp, then_cut=False)
@@ -165,10 +178,10 @@ def main():
         w = csv.writer(f)
         if new:
             w.writerow(["tag", "proto", "timers", "psh", "failure", "link", "ramp_s", "run", "t_ramp", "t_fail",
-                        "swap_lead_s", "outage_s", "lost_gap", "lost_total", "recovered"])
+                        "swap_lead_s", "outage_s", "lost_gap", "lost_total", "recovered", "baseline_s"])
         w.writerow([tag, args.proto, args.timers, args.psh, args.failure, args.link, args.ramp, args.run,
                     f"{t_ramp:.3f}", f"{t_fail:.3f}", f"{lead:.2f}", f"{res['conv_time']:.3f}",
-                    res["lost"], lost_total, res["recovered"]])
+                    res["lost"], lost_total, res["recovered"], f"{base:.2f}"])
     print(f"RESULT {tag} run {args.run}: swap {lead:.1f} s before the failure, outage {res['conv_time']:.2f} s, "
           f"lost {lost_total} packets in total, recovered={res['recovered']}")
 
