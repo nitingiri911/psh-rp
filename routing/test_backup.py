@@ -7,4 +7,8 @@ def test_avoids_bad_link():
     assert ("r6", "r2") not in zip(p, p[1:])
 
 def test_no_alternative_returns_none():
-    assert backup_path(build_topology(), "h1", "h2", ("h1", "r1")) is None
+    assert backup_path(build_topology(), "h1", "h2", ("h1", "r1")) is Nonep
+def test_hop_limit_matches_unlimited_here():
+    g = build_topology()
+    assert backup_path(g, "h1", "h2", ("r2", "r6"), hops=3) == \
+           backup_path(g, "h1", "h2", ("r2", "r6"), hops=99)
