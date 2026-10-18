@@ -51,13 +51,19 @@ class ForwardingManager:
                     continue
                 t0 = time.perf_counter()
                 p = self.standby.get((link, flow))
-                if p:
-                    self.install(flow, p)
-                    self.active[flow] = p
-                    result = "swapped"
-                else:
+                if not p:
                     result = "fallback_ospf_rip"
-                self._log(ts, link, event, flow, (time.perf_counter() - t0) * 1000, result)
+                else:
+                    try:
+                        if self.install(flow, p) is False:
+                            raise RuntimeError("install returned False")
+                    except Exception as exc:
+                        result = f"install_failed:{type(exc).__name__}"
+                    else:
+                        self.active[flow] = p
+                        result = "swapped"
+                self._log(ts, link, event, flow,
+                        (time.perf_counter() - t0) * 1000, result)
 
     def on_hard_cutoff(self, link, ts):
         self._swap(link, ts, "hard_cutoff")
