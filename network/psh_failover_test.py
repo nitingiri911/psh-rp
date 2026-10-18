@@ -107,11 +107,50 @@ class Swapper:
         return self.active[2] if self.active else None
 
 
+class FibAdapter:
+    """Runs Arsh's ForwardingManager (routing/fib_manager.py) and does its route install on Mininet."""
+
+    def __init__(self, net):
+        from routing.fib_manager import ForwardingManager
+        self.net = net
+        self.errors = []
+        self.swapped_at = None
+        self.mgr = ForwardingManager(flows=(("h1", "h2"),), install=self._install)
+
+    def _install(self, flow, path):
+        routers = [n for n in path if n.startswith("r")]  # his paths include the hosts
+        errors = (R.install_path(self.net, routers, FWD_PREFIX)
+                  + R.install_path(self.net, routers[::-1], REV_PREFIX))
+        if not errors and R.route_dev(self.net, SRC, "192.168.2.10") != R.hop(routers[0], routers[1])[0]:
+            errors.append("route check failed: traffic does not use the backup interface")
+        if errors:
+            print("SWAP FAILED:", errors, file=sys.stderr)
+            R.remove_path(self.net, routers, FWD_PREFIX)
+            R.remove_path(self.net, routers[::-1], REV_PREFIX)
+            self.errors += errors
+        elif self.swapped_at is None:
+            self.swapped_at = time.time()
+
+    def on_at_risk(self, link, ts):
+        self.mgr.on_at_risk(link, ts)
+
+    def on_hard_cutoff(self, link, ts):
+        self.mgr.on_hard_cutoff(link, ts)
+
+    def on_clear(self, link, ts):
+        self.mgr.on_clear(link, ts)
+
+    def swap_ts(self):
+        return self.swapped_at
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--proto", choices=["ospf", "rip"], default="ospf")
     ap.add_argument("--timers", choices=["default", "tuned"], default="tuned")
     ap.add_argument("--psh", action="store_true", help="run PSH-RP (engine + route swap)")
+    ap.add_argument("--manager", choices=["builtin", "fib"], default="builtin",
+                    help="builtin = swap logic in this file, fib = Arsh's routing/fib_manager.py")
     ap.add_argument("--link", default="r1-r2")
     ap.add_argument("--failure", choices=["down", "blackhole"], default="blackhole")
     ap.add_argument("--baseline", type=float, default=45, help="healthy seconds before the ramp")
@@ -126,7 +165,7 @@ def main():
     os.chdir(ROOT)  # the engine writes logs/ relative to the current folder
     a, b = args.link.split("-")
     mode = "psh" if args.psh else "plain"
-    tag = f"{mode}_{args.proto}_{args.timers}_{args.failure}_r{args.ramp}"
+    tag = f"{mode}{'_fib' if args.manager == 'fib' else ''}_{args.proto}_{args.timers}_{args.failure}_r{args.ramp}"
     LOGS.mkdir(exist_ok=True)
 
     net = T.build_net(2)
@@ -144,7 +183,7 @@ def main():
             from engine.engine import Engine
             from engine.telemetry import make_probe_fn
             links = {f"{x}-{y}": (net[x], f"{x}-{y}", f"10.0.{i}.2") for i, (x, y) in enumerate(T.LINKS, 1)}
-            swapper = Swapper(net)
+            swapper = FibAdapter(net) if args.manager == "fib" else Swapper(net)
             eng = Engine(links, make_probe_fn(links), swapper.on_at_risk, swapper.on_hard_cutoff,
                          swapper.on_clear, tag=f"{tag}_run{args.run}")
             eng.start()
