@@ -1,28 +1,39 @@
-import csv, os, time, threading
+import csv
+import os
+import threading
+import time
+
 import networkx as nx
+
 from routing.backup import build_topology, backup_path
 
+
 class ForwardingManager:
+
     def __init__(self, graph=None, flows=(("h1", "h2"),),
                  log_path="logs/swap_log.csv", install=None):
         self.graph = graph or build_topology()
         self.flows = list(flows)
-        self.install = install or (lambda flow, path: None) 
+        self.install = install
         self.log_path = log_path
         self.lock = threading.Lock()
         self.active = {f: nx.shortest_path(self.graph, *f) for f in self.flows}
-        self.standby = {}   
+        self.standby = {}  # (link, flow) -> path
+
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
         if not os.path.exists(log_path):
             with open(log_path, "w", newline="") as fh:
-                csv.writer(fh).writerow(["ts", "link", "event", "flow", "swap_ms", "result"])
+                csv.writer(fh).writerow(
+                    ["ts", "link", "event", "flow", "swap_ms", "result"])
 
+    # ---------- helpers ----------
     @staticmethod
     def _edge(link):
         a, b = link.split("-")
         return (a, b)
 
-    def _uses(self, path, edge):
+    @staticmethod
+    def _uses(path, edge):
         pairs = set(zip(path, path[1:]))
         return edge in pairs or edge[::-1] in pairs
 
@@ -30,7 +41,9 @@ class ForwardingManager:
         with open(self.log_path, "a", newline="") as fh:
             csv.writer(fh).writerow([ts, link, event, flow, f"{ms:.3f}", result])
 
+    # ---------- callbacks called by the engine ----------
     def on_at_risk(self, link, ts):
+        """Compute and store a backup path for every flow using this link."""
         edge = self._edge(link)
         with self.lock:
             for flow in self.flows:
@@ -43,6 +56,22 @@ class ForwardingManager:
                     self._log(ts, link, "backup_computed", flow, ms,
                               "stored" if p else "no_backup")
 
+    def on_hard_cutoff(self, link, ts):
+        """Swap the standby in now, even though the link is still up."""
+        self._swap(link, ts, "hard_cutoff")
+
+    def on_link_failure(self, link, ts):
+        """Swap the standby in because the link failed (not called by the engine)."""
+        self._swap(link, ts, "link_failure")
+
+    def on_clear(self, link, ts):
+        """The link recovered: drop the standby. Does not restore the primary path."""
+        with self.lock:
+            for key in [k for k in self.standby if k[0] == link]:
+                del self.standby[key]
+            self._log(ts, link, "clear", "-", 0.0, "standby_dropped")
+
+    # ---------- swap ----------
     def _swap(self, link, ts, event):
         edge = self._edge(link)
         with self.lock:
@@ -53,6 +82,9 @@ class ForwardingManager:
                 p = self.standby.get((link, flow))
                 if not p:
                     result = "fallback_ospf_rip"
+                elif self.install is None:
+                    self.active[flow] = p          # manager state only
+                    result = "no_install"
                 else:
                     try:
                         if self.install(flow, p) is False:
@@ -63,16 +95,4 @@ class ForwardingManager:
                         self.active[flow] = p
                         result = "swapped"
                 self._log(ts, link, event, flow,
-                        (time.perf_counter() - t0) * 1000, result)
-
-    def on_hard_cutoff(self, link, ts):
-        self._swap(link, ts, "hard_cutoff")
-
-    def on_link_failure(self, link, ts):
-        self._swap(link, ts, "link_failure")
-
-    def on_clear(self, link, ts):
-        with self.lock:
-            for key in [k for k in self.standby if k[0] == link]:
-                del self.standby[key]
-            self._log(ts, link, "clear", "-", 0.0, "standby_dropped")
+                          (time.perf_counter() - t0) * 1000, result)
