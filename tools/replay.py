@@ -1,9 +1,12 @@
 import csv
+import glob
+import os
 import sys
 from collections import defaultdict
 from engine import config as c
 from engine.detector import LinkDetector
 from engine.scoring import LinkScorer
+from tools.batch import stats
 
 KEYS = ["FIXED_THRESHOLD", "SIGMA_K", "N_CONSEC", "ALPHA", "HARD_CUTOFF", "FREEZE_MODE"]
 
@@ -26,11 +29,10 @@ def load(tag):
     return samples, marks
 
 
-def hours(samples):
-    rows = next(iter(samples.values()))
-    span = rows[-1][0] - rows[0][0]
-    per = span / max(1, len(rows) - 1)
-    return max(span - c.WARMUP * per, 1e-9) / 3600
+def load_set(prefix):
+    paths = sorted(glob.glob(f"logs/{prefix}_[0-9][0-9]_telemetry.csv"))
+    tags = [p[5:-14] for p in paths]
+    return [load(t) for t in tags if os.path.exists(f"logs/{t}_done")]
 
 
 def replay(samples, alpha, adaptive, hard):
@@ -71,22 +73,36 @@ def score(data, alpha, adaptive, hard):
     return lead, cutoff, false, warm, risk_pct
 
 
-def show(x):
-    return "-" if x is None else f"{x:.1f}"
+def pm(values, places=1):
+    n, m, sd, ci = stats(values)
+    if m is None:
+        return "-"
+    if ci is None:
+        return f"{m:.{places}f}"
+    return f"{m:.{places}f}+-{ci:.{places}f}"
 
 
-def sweep(name, values, apply, noise, ramp):
+def sweep(name, values, apply, noise_runs, ramp_runs):
     print(f"\n{name}")
-    print(f"{'value':>10} {'lead_s':>8} {'cutoff_s':>9} {'false/h':>8} {'at_risk%':>9} {'warmup':>7}")
-    per_hour = hours(noise[0])
+    print(f"{'value':>10} {'lead_s':>14} {'cutoff_s':>14} {'false/run':>14} {'warmup/run':>14} {'alarm_%':>9}")
     for v in values:
         saved = {k: getattr(c, k) for k in KEYS}
         alpha, adaptive, hard = apply(v)
-        lead, cutoff, _, _, _ = score(ramp, alpha, adaptive, hard)
-        _, _, false, warm, risk = score(noise, alpha, adaptive, hard)
+        leads, cutoffs, falses, warms, risks = [], [], [], [], []
+        for d in ramp_runs:
+            lead, cutoff, _, _, _ = score(d, alpha, adaptive, hard)
+            if lead is not None:
+                leads.append(lead)
+            if cutoff is not None:
+                cutoffs.append(cutoff)
+        for d in noise_runs:
+            _, _, f, w, r = score(d, alpha, adaptive, hard)
+            falses.append(f)
+            warms.append(w)
+            risks.append(r)
         for k, val in saved.items():
             setattr(c, k, val)
-        print(f"{str(v):>10} {show(lead):>8} {show(cutoff):>9} {false / per_hour:>8.1f} {risk:>9.1f} {warm:>7}")
+        print(f"{str(v):>10} {pm(leads):>14} {pm(cutoffs):>14} {pm(falses, 2):>14} {pm(warms, 2):>14} {pm(risks):>9}")
 
 
 def set_and_return(attr, adaptive, hard):
@@ -97,8 +113,11 @@ def set_and_return(attr, adaptive, hard):
 
 
 def main():
-    noise = load(sys.argv[1])
-    ramp = load(sys.argv[2])
+    noise = load_set(sys.argv[1])
+    ramp = load_set(sys.argv[2])
+    print(f"noise runs: {len(noise)}  ramp runs: {len(ramp)}")
+    if not noise or not ramp:
+        sys.exit("no finished runs found for one of the prefixes")
     sweep("fixed threshold (no adaptive, no hard cutoff)", [70, 75, 80, 85, 90, 95],
           set_and_return("FIXED_THRESHOLD", False, False), noise, ramp)
     sweep("adaptive: sigma multiplier k", [1.5, 2.0, 2.5, 3.0],
