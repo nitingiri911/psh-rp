@@ -57,7 +57,7 @@ def capture(T, proto, timers, secs, probe=False, engine=False):
         r1.cmd(f"rm -f {out}; timeout {secs + 2} tcpdump -i r1-r2 -nn -e -l -p {flt} > {out} 2>&1 &")
         time.sleep(1)
         if probe and not engine:
-            r1.cmd(f"ping -i 1 -c {secs} -I r1-r2 10.0.1.2 > /dev/null 2>&1 &")
+            r1.cmd(f"ping -i 0.2 -c {secs * 5} -I r1-r2 10.0.1.2 > /dev/null 2>&1 &")
         time.sleep(secs + 4)
         with open(out) as f:
             text = f.read()
@@ -84,7 +84,7 @@ def main():
     rows = []
     jobs = [("ospf_default", "ospf", "default", False), ("ospf_tuned", "ospf", "tuned", False),
             ("rip_default", "rip", "default", False), ("rip_tuned", "rip", "tuned", False),
-            ("psh_probe_1_per_s", "ospf", "default", True)]
+            ("psh_ping_5_per_s", "ospf", "default", True)]
     if args.engine_only:
         jobs = []
     jobs.append(("psh_engine_real", "ospf", "default", True))

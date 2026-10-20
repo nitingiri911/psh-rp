@@ -5,6 +5,8 @@ Live demo (Member 1): the same degrading link, first with plain OSPF, then with 
     sudo python3 network/demo.py                 # both phases, about 4 minutes
     sudo python3 network/demo.py --only psh      # just the PSH-RP phase
     sudo python3 network/demo.py --manager builtin   # use the swap logic in psh_failover_test.py
+    sudo python3 network/demo.py --timers default --post 45   # recommended: plain OSPF then shows its full outage
+    sudo python3 network/demo.py --timers default --post 45   # recommended: plain OSPF then shows its full outage
 
 Each phase: converge, 100 pings/s from h1 to h2, link r1-r2 degrades for --ramp seconds,
 then it dies silently (blackhole). By default the PSH-RP phase uses Arsh's forwarding table manager.
@@ -28,33 +30,33 @@ import psh_failover_test as P
 import psh_topo as T
 from ping_analysis import analyze, parse_ping
 
-_SEQ = re.compile(r"icmp_seq=(\d+)")
+SEQ = re.compile(r"bytes from [^\n]*?icmp_seq=(\d+)")
 
 
 def say(msg):
     print(msg, flush=True)
 
 
-def second_stats(text, prev_n, prev_max):
-    """(replies, lost, n, max_seq) for the last second, from `ping -D` output so far."""
-    seqs = [int(m.group(1)) for line in text.splitlines() if "bytes from" in line for m in [_SEQ.search(line)] if m]
-    n, mx = len(seqs), max(seqs, default=prev_max)
-    replies = n - prev_n
-    return replies, max(0, (mx - prev_max) - replies), n, mx
-
-
 def monitor(stop, state):
-    t0, prev_n, prev_max = time.time(), 0, 0
+    """One line per second. Loss is counted from missing icmp_seq numbers, so a slow ping sender is not loss."""
+    t0 = time.time()
+    seen = hi_prev = lost_prev = 0
     while not stop.is_set():
         time.sleep(1)
         try:
             with open(P.PING_FILE) as f:
                 text = f.read()
         except OSError:
-            text = ""
-        replies, lost, prev_n, prev_max = second_stats(text, prev_n, prev_max)
-        flag = "   <-- NO REPLIES" if replies == 0 else ""
-        say(f"  [{time.time() - t0:4.0f} s] {state['phase']:<9} replies: {replies:3d}  lost: {lost:3d}{flag}  {state['note']}")
+            continue
+        seqs = SEQ.findall(text)
+        n = text.count("bytes from")
+        hi = max(map(int, seqs)) if seqs else 0
+        got, sent = n - seen, hi - hi_prev
+        gap = max((hi - n) - lost_prev, 0)
+        pct = 100.0 * gap / sent if sent > 0 else 0.0
+        note = state["note"] or ("NO REPLIES" if got == 0 else "")
+        say(f"  [{time.time() - t0:4.0f} s] {state['phase']:<9} replies: {got:3d}  lost: {gap:3d} ({pct:3.0f}%)  {note}")
+        seen, hi_prev, lost_prev = n, hi, hi - n
 
 
 def routers(path):
@@ -69,7 +71,7 @@ def run_phase(psh, args):
     state = {"phase": "starting", "note": ""}
     stop = threading.Event()
     try:
-        T.write_configs("ospf", "tuned")
+        T.write_configs("ospf", args.timers)
         T.start_frr(net, "ospf")
         if T.wait_converged(net) is None:
             sys.exit("Network never converged.")
@@ -139,6 +141,8 @@ def main():
     ap.add_argument("--only", choices=["plain", "psh"], default=None)
     ap.add_argument("--manager", choices=["fib", "builtin"], default="fib",
                     help="fib = Arsh's forwarding table manager (default), builtin = logic in psh_failover_test.py")
+    ap.add_argument("--timers", choices=["tuned", "default"], default="tuned",
+                    help="OSPF timers. Use default (with --post 45) so plain OSPF shows its full outage")
     ap.add_argument("--baseline", type=float, default=38, help="healthy seconds (the engine needs about 30 s to warm up)")
     ap.add_argument("--ramp", type=int, default=30)
     ap.add_argument("--post", type=float, default=15)
@@ -146,17 +150,17 @@ def main():
     if os.geteuid() != 0:
         sys.exit("Run with sudo.")
     results = {}
-    for name, psh in (("plain OSPF (tuned timers)", False), ("PSH-RP on OSPF", True)):
+    for name, psh in ((f"plain OSPF ({args.timers} timers)", False), (f"PSH-RP on OSPF ({args.timers})", True)):
         if args.only and (args.only == "psh") != psh:
             continue
         os.system("mn -c >/dev/null 2>&1")
         say(f"\n=== {name}: same degradation, same failure ===")
         results[name] = run_phase(psh, args)
     say("\n=== Result (one short run, not the 10-run statistics) ===")
-    say(f"{'':28}{'outage after failure':>22}{'packets lost':>15}{'backup ready':>16}")
+    say(f"{'':34}{'outage after failure':>22}{'packets lost':>15}{'backup ready':>16}")
     for name, (outage, lost, lead) in results.items():
         ready = f"{lead:.0f} s before" if lead else "no"
-        say(f"{name:28}{outage:>19.2f} s{lost:>15}{ready:>16}")
+        say(f"{name:34}{outage:>19.2f} s{lost:>15}{ready:>16}")
 
 
 if __name__ == "__main__":
