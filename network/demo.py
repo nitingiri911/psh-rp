@@ -2,14 +2,18 @@
 """
 Live demo (Member 1): the same degrading link, first with plain OSPF, then with PSH-RP.
 
-    sudo python3 network/demo.py              # both phases, about 4 minutes
-    sudo python3 network/demo.py --only psh   # just the PSH-RP phase
+    sudo python3 network/demo.py                 # both phases, about 4 minutes
+    sudo python3 network/demo.py --only psh      # just the PSH-RP phase
+    sudo python3 network/demo.py --manager builtin   # use the swap logic in psh_failover_test.py
 
 Each phase: converge, 100 pings/s from h1 to h2, link r1-r2 degrades for --ramp seconds,
-then it dies silently (blackhole). A line per second shows how many replies h1 still gets.
+then it dies silently (blackhole). By default the PSH-RP phase uses Arsh's forwarding table manager.
+"lost" is counted from gaps in the ping sequence numbers, so a slow ping sender is not counted as loss.
+During a total outage no replies arrive, so the line says NO REPLIES, and the lost count appears when replies resume.
 """
 import argparse
 import os
+import re
 import sys
 import threading
 import time
@@ -24,22 +28,37 @@ import psh_failover_test as P
 import psh_topo as T
 from ping_analysis import analyze, parse_ping
 
+_SEQ = re.compile(r"icmp_seq=(\d+)")
+
 
 def say(msg):
     print(msg, flush=True)
 
 
+def second_stats(text, prev_n, prev_max):
+    """(replies, lost, n, max_seq) for the last second, from `ping -D` output so far."""
+    seqs = [int(m.group(1)) for line in text.splitlines() if "bytes from" in line for m in [_SEQ.search(line)] if m]
+    n, mx = len(seqs), max(seqs, default=prev_max)
+    replies = n - prev_n
+    return replies, max(0, (mx - prev_max) - replies), n, mx
+
+
 def monitor(stop, state):
-    t0, seen = time.time(), 0
+    t0, prev_n, prev_max = time.time(), 0, 0
     while not stop.is_set():
         time.sleep(1)
         try:
             with open(P.PING_FILE) as f:
-                n = f.read().count("bytes from")
+                text = f.read()
         except OSError:
-            n = 0
-        say(f"  [{time.time() - t0:4.0f} s] {state['phase']:<9} replies this second: {n - seen:3d}   {state['note']}")
-        seen = n
+            text = ""
+        replies, lost, prev_n, prev_max = second_stats(text, prev_n, prev_max)
+        flag = "   <-- NO REPLIES" if replies == 0 else ""
+        say(f"  [{time.time() - t0:4.0f} s] {state['phase']:<9} replies: {replies:3d}  lost: {lost:3d}{flag}  {state['note']}")
+
+
+def routers(path):
+    return "-".join(n for n in (path or []) if n.startswith("r"))
 
 
 def run_phase(psh, args):
@@ -59,18 +78,29 @@ def run_phase(psh, args):
             from engine.engine import Engine
             from engine.telemetry import make_probe_fn
             links = {f"{x}-{y}": (net[x], f"{x}-{y}", f"10.0.{i}.2") for i, (x, y) in enumerate(T.LINKS, 1)}
-            swapper = P.Swapper(net)
+            fib = args.manager == "fib"
+            swapper = P.FibAdapter(net) if fib else P.Swapper(net)
+
+            def standby(link):
+                if fib:
+                    return next((p for (l, _f), p in swapper.mgr.standby.items() if l == link), None)
+                return swapper.standby.get(link)
+
+            def active():
+                if not swapper.swap_ts():
+                    return None
+                return swapper.mgr.active[("h1", "h2")] if fib else swapper.active[1]
 
             def at_risk(link, ts):
                 swapper.on_at_risk(link, ts)
-                if link in swapper.standby:
-                    say(f"  >>> PSH-RP: {link} is degrading, backup path {'-'.join(swapper.standby[link] or [])} prepared")
+                if standby(link):
+                    say(f"  >>> PSH-RP: {link} is degrading, backup path {routers(standby(link))} prepared")
 
             def hard_cutoff(link, ts):
                 swapper.on_hard_cutoff(link, ts)
-                if swapper.active:
-                    state["note"] = "BACKUP ACTIVE via " + "-".join(swapper.active[1])
-                    say(f"  >>> PSH-RP: traffic moved to {'-'.join(swapper.active[1])}, link still up")
+                if active():
+                    state["note"] = "BACKUP ACTIVE via " + routers(active())
+                    say(f"  >>> PSH-RP: traffic moved to {routers(active())}, link still up")
 
             eng = Engine(links, make_probe_fn(links), at_risk, hard_cutoff, swapper.on_clear, tag="demo")
             eng.start()
@@ -107,6 +137,8 @@ def run_phase(psh, args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=["plain", "psh"], default=None)
+    ap.add_argument("--manager", choices=["fib", "builtin"], default="fib",
+                    help="fib = Arsh's forwarding table manager (default), builtin = logic in psh_failover_test.py")
     ap.add_argument("--baseline", type=float, default=38, help="healthy seconds (the engine needs about 30 s to warm up)")
     ap.add_argument("--ramp", type=int, default=30)
     ap.add_argument("--post", type=float, default=15)
@@ -120,7 +152,7 @@ def main():
         os.system("mn -c >/dev/null 2>&1")
         say(f"\n=== {name}: same degradation, same failure ===")
         results[name] = run_phase(psh, args)
-    say("\n=== Result ===")
+    say("\n=== Result (one short run, not the 10-run statistics) ===")
     say(f"{'':28}{'outage after failure':>22}{'packets lost':>15}{'backup ready':>16}")
     for name, (outage, lost, lead) in results.items():
         ready = f"{lead:.0f} s before" if lead else "no"
